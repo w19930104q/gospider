@@ -42,6 +42,7 @@ func main() {
 	commands.Flags().IntP("delay", "k", 0, "Delay is the duration to wait before creating a new request to the matching domains (second)")
 	commands.Flags().IntP("random-delay", "K", 0, "RandomDelay is the extra randomized duration to wait added to Delay before creating a new request (second)")
 	commands.Flags().IntP("timeout", "m", 10, "Request timeout (second)")
+	commands.Flags().Int64("max-requests", 0, "Maximum number of HTTP requests shared by all seeds (0 = unlimited). Counts every RoundTrip including failures, retries and redirect hops")
 
 	commands.Flags().BoolP("base", "B", false, "Disable all and only use HTML content")
 	commands.Flags().BoolP("js", "", true, "Enable linkfinder in javascript file")
@@ -148,6 +149,19 @@ func run(cmd *cobra.Command, _ []string) {
 		includeOtherSourceResult = false
 	}
 
+	maxRequests, _ := cmd.Flags().GetInt64("max-requests")
+
+	// Reject invalid or incompatible combinations before any network activity.
+	// These are pre-flight errors, so write them to stderr directly instead of
+	// going through the logger, whose output is discarded unless -v is set.
+	if err := validateOptions(maxRequests, otherSource); err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		os.Exit(1)
+	}
+
+	// A single budget is shared by every seed, collector and helper goroutine.
+	budget := core.NewRequestBudget(maxRequests)
+
 	var wg sync.WaitGroup
 	inputChan := make(chan string, threads)
 	for i := 0; i < threads; i++ {
@@ -163,7 +177,7 @@ func run(cmd *cobra.Command, _ []string) {
 
 				var siteWg sync.WaitGroup
 
-				crawler := core.NewCrawler(site, cmd)
+				crawler := core.NewCrawler(site, cmd, budget)
 				siteWg.Add(1)
 				go func() {
 					defer siteWg.Done()
@@ -231,7 +245,29 @@ func run(cmd *cobra.Command, _ []string) {
 	}
 	close(inputChan)
 	wg.Wait()
+
+	// A budget refusal means the crawl was cut short. Results collected up to
+	// that point are kept; report the truncation on stderr and exit 2. If the
+	// budget was exactly consumed but every scheduled request completed, the
+	// run is considered complete and exits 0.
+	if budget.WasRejected() {
+		fmt.Fprintf(os.Stderr, "Truncated: request budget exhausted after %d/%d requests; %d request(s) were not sent\n", budget.Used(), budget.Limit(), budget.Rejected())
+		os.Exit(2)
+	}
 	core.Logger.Info("Done.")
+}
+
+// validateOptions enforces rules that must fail before any network access:
+// negative budgets are invalid, and a finite budget cannot be combined with
+// --other-source because third-party fetches live outside the budget.
+func validateOptions(maxRequests int64, otherSource bool) error {
+	if maxRequests < 0 {
+		return fmt.Errorf("--max-requests must be greater than or equal to 0 (got %d); 0 means unlimited", maxRequests)
+	}
+	if maxRequests > 0 && otherSource {
+		return fmt.Errorf("--max-requests cannot be combined with --other-source: third-party sources are not covered by the request budget")
+	}
+	return nil
 }
 
 func Examples() {

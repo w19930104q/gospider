@@ -3,7 +3,6 @@ package core
 import (
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -18,10 +17,13 @@ func ParseRobots(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.W
 	defer wg.Done()
 	robotsURL := site.String() + "/robots.txt"
 
-	resp, err := http.Get(robotsURL)
+	// Use the crawler's budget-aware client so robots.txt is charged like any
+	// other request and stops immediately once the budget is exhausted.
+	resp, err := crawler.BudgetHTTPClient().Get(robotsURL)
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode == 200 {
 		Logger.Infof("Found robots.txt: %s", robotsURL)
 		body, err := ioutil.ReadAll(resp.Body)

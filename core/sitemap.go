@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"sync"
@@ -17,10 +18,28 @@ func ParseSiteMap(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.
 		"/sitemap-news.xml", "/post-sitemap.xml", "/page-sitemap.xml", "/portfolio-sitemap.xml", "/home_slider-sitemap.xml", "/category-sitemap.xml",
 		"/author-sitemap.xml"}
 
+	client := crawler.BudgetHTTPClient()
+
 	for _, path := range sitemapUrls {
-		// Ignore error when that not valid sitemap.xml path
-		Logger.Infof("Trying to find %s", site.String()+path)
-		_ = sitemap.ParseFromSite(site.String()+path, func(entry sitemap.Entry) error {
+		// Stop probing further candidate paths once the shared budget is gone.
+		if crawler.Budget() != nil && crawler.Budget().Rejected() > 0 {
+			return
+		}
+
+		rawURL := site.String() + path
+		Logger.Infof("Trying to find %s", rawURL)
+
+		// Fetch through the budget-aware client instead of sitemap.ParseFromSite,
+		// which relies on http.DefaultClient and would bypass --max-requests.
+		resp, err := client.Get(rawURL)
+		if err != nil {
+			if errors.Is(err, ErrBudgetExhausted) {
+				return
+			}
+			// Ignore error when that is not a valid sitemap.xml path
+			continue
+		}
+		parseErr := sitemap.Parse(resp.Body, func(entry sitemap.Entry) error {
 			outputFormat := fmt.Sprintf("[sitemap] - %s", entry.GetLocation())
 
 			if crawler.JsonOutput {
@@ -43,6 +62,10 @@ func ParseSiteMap(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.
 			_ = c.Visit(entry.GetLocation())
 			return nil
 		})
+		resp.Body.Close()
+		if parseErr != nil {
+			continue
+		}
 	}
 
 }

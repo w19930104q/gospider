@@ -78,6 +78,7 @@ Flags:
   -k, --delay int                 Delay is the duration to wait before creating a new request to the matching domains (second)
   -K, --random-delay int          RandomDelay is the extra randomized duration to wait added to Delay before creating a new request (second)
   -m, --timeout int               Request timeout (second) (default 10)
+      --max-requests int          Maximum number of HTTP requests shared by all seeds (0 = unlimited). Counts every RoundTrip including failures, retries and redirect hops; cannot be combined with --other-source
   -B, --base                      Disable all and only use HTML content
       --js                        Enable linkfinder in javascript file (default true)
       --subs                      Include subdomains

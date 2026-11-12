@@ -42,6 +42,7 @@ type Crawler struct {
 	C                   *colly.Collector
 	LinkFinderCollector *colly.Collector
 	Output              *Output
+	budget              *RequestBudget
 
 	subSet  *stringset.StringFilter
 	awsSet  *stringset.StringFilter
@@ -73,7 +74,7 @@ type SpiderOutput struct {
 	Length     int    `json:"length"`
 }
 
-func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
+func NewCrawler(site *url.URL, cmd *cobra.Command, budget *RequestBudget) *Crawler {
 	domain := GetDomain(site)
 	if domain == "" {
 		Logger.Error("Failed to parse domain")
@@ -138,8 +139,11 @@ func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
 		}
 	}
 
-	// Set client transport
-	client.Transport = DefaultHTTPTransport
+	// Set client transport. The budget wrapper is stacked on top of the
+	// existing transport instead of replacing it, so every RoundTrip (including
+	// each redirect hop) is charged without changing the underlying client
+	// behaviour or mutating the global default transport.
+	client.Transport = crawlerTransport(DefaultHTTPTransport, budget)
 	c.SetClient(client)
 
 	// Get headers here to overwrite if "burp" flag used
@@ -296,6 +300,7 @@ func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
 		raw:                 raw,
 		domain:              domain,
 		Output:              output,
+		budget:              budget,
 		urlSet:              stringset.NewStringFilter(),
 		subSet:              stringset.NewStringFilter(),
 		jsSet:               stringset.NewStringFilter(),
