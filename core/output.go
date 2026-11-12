@@ -29,6 +29,19 @@ func (o *Output) WriteToFile(msg string) {
 	_, _ = o.f.WriteString(msg + "\n")
 }
 
+// WriteToFileQuiet behaves like WriteToFile but surfaces the write error. It
+// exists mainly so tests can prove the file handle is closed after the crawl
+// finishes.
+func (o *Output) WriteToFileQuiet(msg string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_, err := o.f.WriteString(msg + "\n")
+	return err
+}
+
+// Close closes the underlying file. Crawler.Wait invokes it exactly once.
 func (o *Output) Close() {
-	o.f.Close()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_ = o.f.Close()
 }

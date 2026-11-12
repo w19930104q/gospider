@@ -3,16 +3,17 @@ package core
 import (
 	"fmt"
 	"net/url"
-	"sync"
 
 	jsoniter "github.com/json-iterator/go"
 
-	"github.com/gocolly/colly/v2"
 	sitemap "github.com/oxffaa/gopher-parse-sitemap"
 )
 
-func ParseSiteMap(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.WaitGroup) {
-	defer wg.Done()
+// ParseSiteMap probes the well-known sitemap locations and enqueues every entry
+// into the Crawler's main Collector through its lifetime-tracked Visit. It is
+// meant to be run inside Crawler.GoSource so that the job's Wait cannot return
+// while the sitemap discovery is still in progress.
+func ParseSiteMap(site *url.URL, crawler *Crawler) {
 	sitemapUrls := []string{"/sitemap.xml", "/sitemap_news.xml", "/sitemap_index.xml", "/sitemap-index.xml", "/sitemapindex.xml",
 		"/sitemap-news.xml", "/post-sitemap.xml", "/page-sitemap.xml", "/portfolio-sitemap.xml", "/home_slider-sitemap.xml", "/category-sitemap.xml",
 		"/author-sitemap.xml"}
@@ -40,7 +41,7 @@ func ParseSiteMap(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.
 			if crawler.Output != nil {
 				crawler.Output.WriteToFile(outputFormat)
 			}
-			_ = c.Visit(entry.GetLocation())
+			_ = crawler.Visit(entry.GetLocation())
 			return nil
 		})
 	}

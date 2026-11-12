@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	jsoniter "github.com/json-iterator/go"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -23,6 +22,17 @@ var commands = &cobra.Command{
 }
 
 func main() {
+	registerFlags(commands)
+	commands.Flags().SortFlags = false
+	if err := commands.Execute(); err != nil {
+		core.Logger.Error(err)
+		os.Exit(1)
+	}
+}
+
+// registerFlags attaches every CLI flag to the command. It is split out of
+// main so tests can build an identically configured command in-process.
+func registerFlags(commands *cobra.Command) {
 	commands.Flags().StringP("site", "s", "", "Site to crawl")
 	commands.Flags().StringP("sites", "S", "", "Site list to crawl")
 	commands.Flags().StringP("proxy", "p", "", "Proxy (Ex: http://127.0.0.1:8080)")
@@ -34,7 +44,7 @@ func main() {
 	commands.Flags().StringP("blacklist", "", "", "Blacklist URL Regex")
 	commands.Flags().StringP("whitelist", "", "", "Whitelist URL Regex")
 	commands.Flags().StringP("whitelist-domain", "", "", "Whitelist Domain")
-    commands.Flags().StringP("filter-length", "L", "", "Turn on length filter")
+	commands.Flags().StringP("filter-length", "L", "", "Turn on length filter")
 
 	commands.Flags().IntP("threads", "t", 1, "Number of threads (Run sites in parallel)")
 	commands.Flags().IntP("concurrent", "c", 5, "The number of the maximum allowed concurrent requests of the matching domains")
@@ -50,7 +60,7 @@ func main() {
 	commands.Flags().BoolP("other-source", "a", false, "Find URLs from 3rd party (Archive.org, CommonCrawl.org, VirusTotal.com, AlienVault.com)")
 	commands.Flags().BoolP("include-subs", "w", false, "Include subdomains crawled from 3rd party. Default is main domain")
 	commands.Flags().BoolP("include-other-source", "r", false, "Also include other-source's urls (still crawl and request)")
-    commands.Flags().BoolP("subs", "", false, "Include subdomains")
+	commands.Flags().BoolP("subs", "", false, "Include subdomains")
 
 	commands.Flags().BoolP("debug", "", false, "Turn on debug mode")
 	commands.Flags().BoolP("json", "", false, "Enable JSON output")
@@ -58,15 +68,8 @@ func main() {
 	commands.Flags().BoolP("quiet", "q", false, "Suppress all the output and only show URL")
 	commands.Flags().BoolP("no-redirect", "", false, "Disable redirect")
 	commands.Flags().BoolP("version", "", false, "Check version")
-    commands.Flags().BoolP("length", "l", false, "Turn on length")
-    commands.Flags().BoolP("raw", "R", false, "Enable raw output")
-
-
-	commands.Flags().SortFlags = false
-	if err := commands.Execute(); err != nil {
-		core.Logger.Error(err)
-		os.Exit(1)
-	}
+	commands.Flags().BoolP("length", "l", false, "Turn on length")
+	commands.Flags().BoolP("raw", "R", false, "Enable raw output")
 }
 
 func run(cmd *cobra.Command, _ []string) {
@@ -161,67 +164,14 @@ func run(cmd *cobra.Command, _ []string) {
 					continue
 				}
 
-				var siteWg sync.WaitGroup
-
 				crawler := core.NewCrawler(site, cmd)
-				siteWg.Add(1)
-				go func() {
-					defer siteWg.Done()
-					crawler.Start(linkfinder)
-				}()
-
-				// Brute force Sitemap path
-				if sitemap {
-					siteWg.Add(1)
-					go core.ParseSiteMap(site, crawler, crawler.C, &siteWg)
-				}
-
-				// Find Robots.txt
-				if robots {
-					siteWg.Add(1)
-					go core.ParseRobots(site, crawler, crawler.C, &siteWg)
-				}
-
-				if otherSource {
-					siteWg.Add(1)
-					go func() {
-						defer siteWg.Done()
-						urls := core.OtherSources(site.Hostname(), includeSubs)
-						for _, url := range urls {
-							url = strings.TrimSpace(url)
-							if len(url) == 0 {
-								continue
-							}
-
-							outputFormat := fmt.Sprintf("[other-sources] - %s", url)
-							if includeOtherSourceResult {
-								if crawler.JsonOutput {
-									sout := core.SpiderOutput{
-										Input:      crawler.Input,
-										Source:     "other-sources",
-										OutputType: "url",
-										Output:     url,
-									}
-									if data, err := jsoniter.MarshalToString(sout); err == nil {
-										outputFormat = data
-									}
-								} else if crawler.Quiet {
-									outputFormat = url
-								}
-								fmt.Println(outputFormat)
-
-								if crawler.Output != nil {
-									crawler.Output.WriteToFile(outputFormat)
-								}
-							}
-
-							_ = crawler.C.Visit(url)
-						}
-					}()
-				}
-				siteWg.Wait()
-				crawler.C.Wait()
-				crawler.LinkFinderCollector.Wait()
+				// Run starts every discovery entry (main crawl, sitemap,
+				// robots.txt and third-party sources) and blocks until all of
+				// them and every request they recursively produce have
+				// finished; the output file is closed exactly once, right
+				// before Run returns. Each site therefore settles on its own
+				// without any fixed sleep or idle polling.
+				crawler.Run(linkfinder, sitemap, robots, otherSource, includeSubs, includeOtherSourceResult)
 			}
 		}()
 	}

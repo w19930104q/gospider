@@ -7,21 +7,22 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 
 	jsoniter "github.com/json-iterator/go"
-
-	"github.com/gocolly/colly/v2"
 )
 
-func ParseRobots(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.WaitGroup) {
-	defer wg.Done()
+// ParseRobots fetches /robots.txt and enqueues every allowed path into the
+// Crawler's main Collector through its lifetime-tracked Visit. It is meant to
+// be run inside Crawler.GoSource so that the job's Wait cannot return while the
+// robots discovery is still in progress.
+func ParseRobots(site *url.URL, crawler *Crawler) {
 	robotsURL := site.String() + "/robots.txt"
 
 	resp, err := http.Get(robotsURL)
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode == 200 {
 		Logger.Infof("Found robots.txt: %s", robotsURL)
 		body, err := ioutil.ReadAll(resp.Body)
@@ -57,9 +58,10 @@ func ParseRobots(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.W
 				if crawler.Output != nil {
 					crawler.Output.WriteToFile(outputFormat)
 				}
-				_ = c.Visit(url)
+				_ = crawler.Visit(url)
 			}
 		}
+
 	}
 
 }
