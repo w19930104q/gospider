@@ -18,10 +18,15 @@ func ParseRobots(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.W
 	defer wg.Done()
 	robotsURL := site.String() + "/robots.txt"
 
-	resp, err := http.Get(robotsURL)
+	// The download (and every redirect hop it follows) is charged against
+	// the per-site request budget. With no budget configured this behaves
+	// exactly like http.Get.
+	client := &http.Client{Transport: WrapBudgetTransport(http.DefaultTransport, crawler.Budget)}
+	resp, err := client.Get(robotsURL)
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode == 200 {
 		Logger.Infof("Found robots.txt: %s", robotsURL)
 		body, err := ioutil.ReadAll(resp.Body)

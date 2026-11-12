@@ -42,6 +42,7 @@ func main() {
 	commands.Flags().IntP("delay", "k", 0, "Delay is the duration to wait before creating a new request to the matching domains (second)")
 	commands.Flags().IntP("random-delay", "K", 0, "RandomDelay is the extra randomized duration to wait added to Delay before creating a new request (second)")
 	commands.Flags().IntP("timeout", "m", 10, "Request timeout (second)")
+	commands.Flags().IntP("request-budget", "", 0, "Max HTTP request attempts per site (0 means unlimited). Counts HTML/JS/robots/sitemap downloads, redirect hops and failed attempts")
 
 	commands.Flags().BoolP("base", "B", false, "Disable all and only use HTML content")
 	commands.Flags().BoolP("js", "", true, "Enable linkfinder in javascript file")
@@ -129,6 +130,14 @@ func run(cmd *cobra.Command, _ []string) {
 		core.Logger.Info("No site in list. Please check your site input again")
 		os.Exit(1)
 	}
+
+	// Validate the request budget before starting anything
+	requestBudget, _ := cmd.Flags().GetInt("request-budget")
+	if requestBudget < 0 {
+		fmt.Fprintln(os.Stderr, "Error: --request-budget must be 0 (unlimited) or a positive integer")
+		os.Exit(1)
+	}
+	quiet, _ := cmd.Flags().GetBool("quiet")
 
 	threads, _ := cmd.Flags().GetInt("threads")
 	sitemap, _ := cmd.Flags().GetBool("sitemap")
@@ -222,6 +231,19 @@ func run(cmd *cobra.Command, _ []string) {
 				siteWg.Wait()
 				crawler.C.Wait()
 				crawler.LinkFinderCollector.Wait()
+
+				// Per-site request budget closing report. It is a single JSON
+				// line; in quiet mode it goes to stderr so the URL-only
+				// stdout stream is not polluted.
+				if crawler.Budget != nil {
+					if data, err := jsoniter.MarshalToString(crawler.Budget.Summary(crawler.Input)); err == nil {
+						if quiet {
+							fmt.Fprintln(os.Stderr, data)
+						} else {
+							fmt.Println(data)
+						}
+					}
+				}
 			}
 		}()
 	}

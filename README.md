@@ -78,6 +78,7 @@ Flags:
   -k, --delay int                 Delay is the duration to wait before creating a new request to the matching domains (second)
   -K, --random-delay int          RandomDelay is the extra randomized duration to wait added to Delay before creating a new request (second)
   -m, --timeout int               Request timeout (second) (default 10)
+      --request-budget int        Max HTTP request attempts per site (0 means unlimited). Counts HTML/JS/robots/sitemap downloads, redirect hops and failed attempts
   -B, --base                      Disable all and only use HTML content
       --js                        Enable linkfinder in javascript file (default true)
       --subs                      Include subdomains
@@ -98,6 +99,39 @@ Flags:
   -h, --help                      help for gospider
 
 ```
+
+## Request budget
+
+`--request-budget N` caps how many HTTP request attempts gospider may make for
+**each input site**, so a crawl of one site always finishes within a given
+request allowance:
+
+* `0` (default) keeps the original unlimited behavior. A negative value is
+  rejected with an error before anything starts.
+* Every attempt shares the same per-site counter: HTML pages, Javascript
+  files, `robots.txt`, sitemap downloads and **each redirect hop**. Failed
+  attempts (connection errors, timeouts, ...) are counted too.
+* Requests that are never sent (deduplicated, filtered out by scope or
+  extension rules, over depth) are not counted.
+* Budgets are independent per input site: two sites with
+  `--request-budget 10` may each spend up to 10 attempts, even when crawled
+  in parallel, and concurrency can never push a site over its budget.
+* Once a site's budget is spent, no new request is dispatched for that site;
+  requests already in flight finish normally and the crawl shuts down
+  cleanly without affecting other sites.
+* The budget covers the crawl itself (other-source disabled). Third-party
+  other-source API calls (`--other-source`) are not charged.
+
+When the budget is enabled, gospider prints one JSON summary line per site
+when that site finishes, e.g.:
+
+```json
+{"input":"https://target.com","type":"request-budget","budget":100,"used":100,"truncated":true}
+```
+
+`used` is the number of attempts actually spent and `truncated` tells whether
+the crawl was cut short by the budget. In `--quiet` mode the summary goes to
+**stderr** so the URL-only stdout stream is not polluted.
 
 ## Example commands
 

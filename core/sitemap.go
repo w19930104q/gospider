@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"sync"
 
@@ -17,10 +18,19 @@ func ParseSiteMap(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.
 		"/sitemap-news.xml", "/post-sitemap.xml", "/page-sitemap.xml", "/portfolio-sitemap.xml", "/home_slider-sitemap.xml", "/category-sitemap.xml",
 		"/author-sitemap.xml"}
 
+	// Each sitemap download (and every redirect hop it follows) is charged
+	// against the per-site request budget. With no budget configured this
+	// behaves exactly like the library's ParseFromSite (a plain http.Get).
+	client := &http.Client{Transport: WrapBudgetTransport(http.DefaultTransport, crawler.Budget)}
+
 	for _, path := range sitemapUrls {
 		// Ignore error when that not valid sitemap.xml path
 		Logger.Infof("Trying to find %s", site.String()+path)
-		_ = sitemap.ParseFromSite(site.String()+path, func(entry sitemap.Entry) error {
+		resp, err := client.Get(site.String() + path)
+		if err != nil {
+			continue
+		}
+		_ = sitemap.Parse(resp.Body, func(entry sitemap.Entry) error {
 			outputFormat := fmt.Sprintf("[sitemap] - %s", entry.GetLocation())
 
 			if crawler.JsonOutput {
@@ -43,6 +53,7 @@ func ParseSiteMap(site *url.URL, crawler *Crawler, c *colly.Collector, wg *sync.
 			_ = c.Visit(entry.GetLocation())
 			return nil
 		})
+		resp.Body.Close()
 	}
 
 }

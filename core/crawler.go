@@ -58,6 +58,8 @@ type Crawler struct {
 	raw        bool
 	subs       bool
 
+	Budget *RequestBudget
+
 
 	filterLength_slice		[]int
 
@@ -90,6 +92,10 @@ func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
 	length, _ := cmd.Flags().GetBool("length")
 	raw, _ := cmd.Flags().GetBool("raw")
 	subs, _ := cmd.Flags().GetBool("subs")
+
+	// Per-site request budget. nil means unlimited (original behavior).
+	requestBudget, _ := cmd.Flags().GetInt("request-budget")
+	budget := NewRequestBudget(requestBudget)
 
 	c := colly.NewCollector(
 		colly.Async(true),
@@ -138,8 +144,9 @@ func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
 		}
 	}
 
-	// Set client transport
-	client.Transport = DefaultHTTPTransport
+	// Set client transport. The budget wrapper charges every HTTP attempt
+	// (including redirect hops and failures) against the per-site budget.
+	client.Transport = WrapBudgetTransport(DefaultHTTPTransport, budget)
 	c.SetClient(client)
 
 	// Get headers here to overwrite if "burp" flag used
@@ -284,6 +291,22 @@ func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
 		linkFinderCollector.URLFilters = append(linkFinderCollector.URLFilters, regexp.MustCompile("http(s)?://"+whiteListDomain))
 	}
 
+	// Once the budget is spent, stop dispatching new requests. Aborted
+	// requests are never sent, so they are not charged; requests already
+	// in flight still finish normally. colly's Clone() shares the backend
+	// (hence the budget transport) but not the OnRequest callbacks, so the
+	// hook is registered on both collectors.
+	if budget != nil {
+		stopWhenDepleted := func(r *colly.Request) {
+			if budget.Depleted() {
+				budget.MarkExhausted()
+				r.Abort()
+			}
+		}
+		c.OnRequest(stopWhenDepleted)
+		linkFinderCollector.OnRequest(stopWhenDepleted)
+	}
+
 	return &Crawler{
 		cmd:                 cmd,
 		C:                   c,
@@ -296,6 +319,7 @@ func NewCrawler(site *url.URL, cmd *cobra.Command) *Crawler {
 		raw:                 raw,
 		domain:              domain,
 		Output:              output,
+		Budget:              budget,
 		urlSet:              stringset.NewStringFilter(),
 		subSet:              stringset.NewStringFilter(),
 		jsSet:               stringset.NewStringFilter(),
